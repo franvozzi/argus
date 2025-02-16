@@ -50,7 +50,7 @@ CREATE TABLE executions (
 
 ## Casos de Uso
 
-### a) Ejecución Exitosa de Código
+### Ejecución Exitosa de Código
 
 Flujo:
 
