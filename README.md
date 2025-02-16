@@ -1,9 +1,7 @@
-<div style="width: 100%; height: 100vh; display: flex; flex-direction: column; justify-content: center; align-items: center;">
-  <div style="margin-bottom: 2rem;">
+<div align="center" style="margin-bottom: 2rem;">
     <img src="logoArgus.png" alt="Logo Argus" style="max-width: 200px; height: auto;">
   </div>
 
-  <div style="text-align: center;">
 
 # Argus
 
