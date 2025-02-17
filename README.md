@@ -77,6 +77,71 @@ Argus es una aplicación web diseñada para medir el rendimiento de bloques de c
 - CloudWatch: Para la monitorización y logging.
 - IAM: Para la gestión de permisos y seguridad.
 - (Opcional) S3 para servir el frontend de forma estática.
+
+### Diagrama de flujo:
+```mermaid
+graph TD
+    subgraph Usuario
+        A[Usuario: Ingresa código, lenguaje e input opcional]
+    end
+
+    subgraph Frontend
+        B[Frontend: Envía solicitud a la API - POST /api/v1/execute]
+    end
+
+    subgraph API_Gateway
+        C[API Gateway: Recibe solicitud, autentica JWT, aplica rate limiting]
+    end
+
+    subgraph Backend
+        D[Backend: Valida la solicitud]
+        D --> E{Solicitud Válida?}
+        E -- No --> F[Backend: Responde con error - 400 Bad Request o 401 Unauthorized]
+        E -- Sí --> G[Backend: Crea mensaje para SQS - código, lenguaje, input, userId, executionId]
+        G --> H[Backend: Envía mensaje a SQS]
+        H --> I[Backend: Responde a Frontend - 202 Accepted, executionId]
+    end
+
+    subgraph SQS
+        J[SQS: Cola de Mensajes]
+    end
+
+    subgraph Workers
+        K[Worker: Recibe mensaje de SQS]
+        K --> L[Worker: Ejecuta código, mide tiempo y memoria, analiza complejidad]
+        L --> M[Worker: Envía resultados - a otra cola SQS o directamente al Backend]
+    end
+
+        subgraph Backend_Resultados
+        N[Backend Resultados: Recibe resultados]
+        N -->O[Backend Resultados: Guarda resultados en la Base de Datos]
+    end
+
+    subgraph Base_de_Datos
+        P[PostgreSQL: Almacena resultados]
+    end
+
+      subgraph Frontend_Resultados
+        Q[Frontend: Recibe Resultados]
+    end
+
+    subgraph Usuario_Resultados
+      R[Usuario: Visualiza Resultados]
+    end
+
+    A --> B
+    B --> C
+    C --> D
+    I --> B
+    H --> J
+    J --> K
+    M --> N
+    N --> P
+    N -->Q
+    Q --> R
+
+    F --> B
+```
 <hr>
 
 <div align="center" style="display: flex; justify-content: center;">
