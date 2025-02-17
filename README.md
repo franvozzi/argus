@@ -5,7 +5,7 @@
 
 # Argus
 
-Argus es una aplicación para medir performance en bloques de código.
+Argus es una aplicación diseñada para analizar el rendimiento de bloques de código, proporcionando métricas detalladas de tiempo de ejecución y uso de memoria en múltiples lenguajes de programación.
 
 ## Análisis y Diseño
 
