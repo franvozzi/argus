@@ -1,5 +1,5 @@
 <div align="center" style="margin-bottom: 2rem;">
-    <img src="https://drive.google.com/uc?export=view&id=1QILOyhInaZghhRl0NyN_vv8DOP9qzVFA" alt="Logo Argus" style="max-width: 200px; height: auto;">
+    <img src="https://drive.google.com/uc?export=view&id=1yYvj-7zVst7a_zDiPEOnbKphOoBZYjSY" alt="Logo Argus" style="max-width: 200px; height: auto;">
   </div>
 
 
