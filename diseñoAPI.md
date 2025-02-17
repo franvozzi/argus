@@ -46,14 +46,63 @@ La API REST de Argus permitirá a los usuarios ejecutar código en múltiples le
     }
     ```
 * **Diagrama de secuencia** 
-<div>
-  <img align="center" src="https://drive.google.com/uc?export=view&id=1ahbNIoHEHFEQbN53g0Kw-G8U25FJifVn">
-</div>
+```mermaid
+sequenceDiagram
+    participant Usuario
+    participant Frontend as "Frontend (Next.js)"
+    participant APIGateway as "API Gateway (AWS)"
+    participant Backend as "Backend (Node.js/Express)"
+    participant SQS as "SQS (AWS)"
+    participant DockerWorker as "Docker Worker"
+    participant PostgreSQL as "PostgreSQL"
+
+    Usuario->>Frontend: Ingresa código, input y lenguaje
+    activate Frontend
+
+    Frontend->>APIGateway: Envía solicitud (código, input, lenguaje)
+    activate APIGateway
+
+    APIGateway->>Backend: Reenvía solicitud
+    activate Backend
+
+    Backend->>SQS: Encola mensaje (código, input, lenguaje, userId)
+    activate SQS
+      Note over Backend, SQS: Autenticación del Usuario<br>(si aplica, antes de encolar)
+    Backend-->>APIGateway: Confirma recepción (202 Accepted)
+    deactivate Backend
+
+    APIGateway-->>Frontend: Respuesta 202 Accepted
+    deactivate APIGateway
+     Frontend-->>Usuario: Muestra Indicador de Carga
+     deactivate Frontend
+    SQS->>DockerWorker: Entrega mensaje
+    activate DockerWorker
+
+    DockerWorker->>DockerWorker: Ejecuta código, mide tiempo y memoria
+    DockerWorker->>DockerWorker: Realiza análisis de complejidad
+    Note right of DockerWorker: Dentro del Contenedor Docker
+
+    DockerWorker->>Backend: Envía resultados (tiempo, memoria, complejidad, salida, errores)
+     activate Backend
+    Backend->>PostgreSQL: Guarda resultados (opcionalmente con userId)
+    activate PostgreSQL
+    PostgreSQL-->>Backend: Confirmación
+    deactivate PostgreSQL
+
+    Backend-->>SQS: Elimina mensaje de la cola
+    deactivate SQS
+     Backend-->>APIGateway: API Response
+     deactivate Backend
+
+    APIGateway-->>Frontend: Envía resultados al frontend
+     activate Frontend
+    Frontend->>Usuario: Muestra resultados
+    deactivate Frontend
+    deactivate DockerWorker
+```
     Se utilizarán códigos de estado HTTP estándar para indicar diferentes tipos de errores (400 Bad Request, 408 Request Timeout, 500 Internal Server Error, etc.).
 
 </br>
-</br>
-
 
 **2. Obtener el Historial de Ejecuciones (Requiere Autenticación)**
 
@@ -86,9 +135,39 @@ La API REST de Argus permitirá a los usuarios ejecutar código en múltiples le
     }
     ```
 * **Diagrama de secuencia** 
-<div>
-  <img align="center" src="https://drive.google.com/uc?export=view&id=1FNiHm3lVkohoHbnyilrs3Xj5MTUw4kd8">
-</div>
+```mermaid
+sequenceDiagram
+    participant Usuario
+    participant Frontend
+    participant APIGateway
+    participant Backend
+    participant PostgreSQL
+
+    Usuario->>Frontend: Solicita ver historial
+    activate Frontend
+
+    Frontend->>APIGateway: GET /api/v1/history (con token JWT en el header)
+    activate APIGateway
+    Note over Frontend, APIGateway: El Frontend incluye el JWT en el header Authorization
+
+    APIGateway->>Backend: Reenvía solicitud (con JWT)
+    activate Backend
+
+    Backend->>Backend: Valida JWT
+    Note over Backend: Si JWT inválido, retorna 401 Unauthorized
+
+    Backend->>PostgreSQL: Obtiene historial del usuario (usando userId del JWT)
+    activate PostgreSQL
+    PostgreSQL-->>Backend: Lista de ejecuciones (o lista vacía)
+    deactivate PostgreSQL
+
+    Backend->>APIGateway: 200 OK + lista de ejecuciones
+    deactivate Backend
+        APIGateway->>Frontend: 200 OK + lista de ejecuciones
+        deactivate APIGateway
+        Frontend->>Usuario: Muestra el historial
+        deactivate Frontend
+```
 </br>
 
 **3. Obtener Detalles de una Ejecución (Requiere Autenticación)**
@@ -127,10 +206,6 @@ La API REST de Argus permitirá a los usuarios ejecutar código en múltiples le
       "error": "Execution not found" //404
     }
     ```
- * **Diagrama de secuencia**    
-<div>
-  <img align="center" src="https://drive.google.com/uc?export=view&id=1i-lwtytFn1eBX6mdf-dHNdTHDhy_ihxB">
-</div>
 </br>
 
 **4. Obtener Lenguajes Soportados**
@@ -144,10 +219,6 @@ La API REST de Argus permitirá a los usuarios ejecutar código en múltiples le
       "languages": ["python", "javascript", "java", "c++", "go"]
     }
     ```
-* **Diagrama de secuencia** 
-<div>
-  <img align="center" src="https://drive.google.com/uc?export=view&id=1G7ddQ3IUauAvot8eE2RBTyC8TAqtjfP5">
-</div>
 </br>
 
 **Seguridad y Autenticación**
@@ -181,11 +252,46 @@ La API REST de Argus permitirá a los usuarios ejecutar código en múltiples le
     }
     ```
 * **Diagrama de secuencia**
+```mermaid
+sequenceDiagram
+    participant Usuario
+    participant Frontend
+    participant APIGateway
+    participant Backend
+    participant PostgreSQL
 
+    Usuario->>Frontend: Ingresa datos de registro (username, email, password)
+    activate Frontend
+
+    Frontend->>APIGateway: POST /api/v1/register
+    activate APIGateway
+
+    APIGateway->>Backend: Reenvía solicitud
+    activate Backend
+
+    Backend->>Backend: Valida datos de entrada
+    Note over Backend: Verifica formato de email, longitud de contraseña, etc.
+    Backend->>PostgreSQL: Verifica si el email ya existe
+    activate PostgreSQL
+    PostgreSQL-->>Backend: Resultado de la consulta
+    deactivate PostgreSQL
+    Note over Backend: Si el email existe, retorna 409 Conflict
+
+    Backend->>Backend: Hashea la contraseña (bcrypt)
+    Backend->>PostgreSQL: Guarda el nuevo usuario (username, email, hash de contraseña)
+    activate PostgreSQL
+    PostgreSQL-->>Backend: Confirmación (o error)
+    deactivate PostgreSQL
+    Note over Backend: Si hay error de base de datos, retorna 500 Internal Server Error
+    Backend->>APIGateway: 201 Created + user_id
+    deactivate Backend
+
+    APIGateway->>Frontend: 201 Created + user_id
+    deactivate APIGateway
+    Frontend-->>Usuario: Muestra mensaje de éxito
+    deactivate Frontend
+```
   
-<div>
-  <img src="https://drive.google.com/uc?export=view&id=1gho6NMASzLeXvDs17sBmZfAgWU9WyJuY" align="center">
-</div>
 </br>
 
 **2. Inicio de Sesión (Login)**
@@ -215,9 +321,43 @@ La API REST de Argus permitirá a los usuarios ejecutar código en múltiples le
         ```
 * **Diagrama de secuencia**
   
-<div>
-  <img src="https://drive.google.com/uc?export=view&id=1lY5rzODQXCtem_RhoTK11NMBpkzt3JZ9" align="center">
-</div>
+```mermaid
+sequenceDiagram
+    participant Usuario
+    participant Frontend
+    participant APIGateway
+    participant Backend
+    participant PostgreSQL
+
+    Usuario->>Frontend: Ingresa credenciales (email, password)
+    activate Frontend
+
+    Frontend->>APIGateway: POST /api/v1/login
+    activate APIGateway
+
+    APIGateway->>Backend: Reenvía solicitud
+    activate Backend
+
+    Backend->>PostgreSQL: Busca usuario por email
+    activate PostgreSQL
+    PostgreSQL-->>Backend: Usuario encontrado (o null)
+    deactivate PostgreSQL
+    Note over Backend: Si usuario no encontrado, retorna 401 Unauthorized
+
+    Backend->>Backend: Compara hash de contraseña (bcrypt)
+    Note over Backend: Si contraseña incorrecta, retorna 401 Unauthorized
+
+    Backend->>Backend: Genera token JWT
+    Backend->>APIGateway: 200 OK + token JWT
+    deactivate Backend
+
+    APIGateway->>Frontend: 200 OK + token JWT
+    deactivate APIGateway
+
+    Frontend->>Frontend: Guarda el token JWT (localStorage, cookie)
+    Frontend-->>Usuario: Redirige a página principal (o dashboard)
+    deactivate Frontend
+```
 </br>
 
 **3. Protección de Endpoints**
