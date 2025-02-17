@@ -1,103 +1,211 @@
-# Fase 1: Diseño y Planeamiento
+# System Design
 
-## System Design
-Aquí definiremos la estructura y componentes de un sistema para cumplir con requerimientos específicos.
+Este documento describe el diseño del sistema para Argus.
 
-La aplicación se compone de los siguientes módulos:
+## 1. Componentes Principales
 
-**Frontend** (Next.js + TypeScript): UI para ingresar código, ver resultados y consultar el historial.
+### Frontend (Next.js)
 
-**Backend** (Go API REST): Recibe y ejecuta el código en un entorno aislado, mide performance y almacena resultados.
+*   **Responsabilidades:**
+    *   Interfaz de usuario para ingresar código, inputs y seleccionar el lenguaje.
+    *   Editor de código enriquecido (utilizando `react-ace` o `CodeMirror`).
+    *   Visualización de resultados (tablas y gráficos, usando `recharts` o `Chart.js`).
+    *   Gestión del estado de la UI (Context API, Zustand, o Redux si es necesario).
+    *   Comunicación con la API REST del backend (mediante `fetch` o `axios`).
+    *   Manejo de la autenticación del usuario (guardar/leer el token JWT).
+    *   Mostrar indicadores de carga y mensajes de error.
+    *   Renderizado del lado del servidor (SSR) y/o generación de sitios estáticos (SSG) con Next.js para optimizar el rendimiento.
+*   **Tecnologías:** Next.js, React, TypeScript, react-ace/CodeMirror, recharts/Chart.js, fetch/axios.
 
-**Ejecutor de Código** (Docker + Runtimes): Contenedores Docker configurados para cada lenguaje.
+### Backend (Node.js/Express.js)
 
-**Base de Datos** (PostgreSQL en Azure): Almacena resultados de ejecuciones.
+*   **Responsabilidades:**
+    *   Implementación de la API RESTful (con Express.js).
+    *   Validación de los datos de entrada (código, input, lenguaje).
+    *   Autenticación y autorización (JWT, bcrypt).
+    *   Comunicación con la cola de mensajes (SQS).
+    *   Interacción con la base de datos PostgreSQL (utilizando un ORM como Sequelize o TypeORM).
+    *   Gestión de errores y logging (Winston/Bunyan).
+    *   Implementación del *rate limiting* (usando `express-rate-limit`).
+*   **Tecnologías:** Node.js, Express.js, TypeScript, JWT, bcrypt, Sequelize/TypeORM, express-rate-limit, Winston/Bunyan.
 
-**Infraestructura** (Azure + Docker Swarm/Kubernetes): Orquestación de contenedores para escalabilidad.
+### Workers (Docker + Node.js/Python/...)
 
-<div align="center">
-  <img src="https://drive.google.com/uc?export=view&id=1mK7YHImPYQmv1lFiTZdYpaDVPwTTKFPb" width="45%"></img>
-</div>
+*   **Responsabilidades:**
+    *   Recibir mensajes de la cola de mensajes (SQS).
+    *   Ejecutar el código de forma segura dentro de un contenedor Docker.
+    *   Medir el tiempo de ejecución y el uso de memoria.
+    *   Realizar el análisis de complejidad algorítmica (estático y dinámico).
+    *   Enviar los resultados al backend (a través de la cola de mensajes o directamente).
+    *   Manejar errores (timeouts, errores de ejecución, etc.).
+*   **Tecnologías:** Docker, Node.js (para el worker de JavaScript), Python (para el worker de Python), bibliotecas de medición de rendimiento, bibliotecas de análisis AST (esprima, ast).
 
-## Flujo de Datos
-Para comprender el flujo de datos de Argus, debemos comprender que simplemente esta será la ruta desde su origen hasta su destino.
+### Cola de Mensajes (AWS SQS)
 
-<div>
-  <img src="https://drive.google.com/uc?export=view&id=1Sn7aclGMmUcb5htZFRqiHDSMBtTRV1l9">
-</div>
+*   **Responsabilidades:**
+    *   Desacoplar el backend de los workers.
+    *   Permitir la ejecución asíncrona de código.
+    *   Asegurar la escalabilidad y la resiliencia del sistema.
+    *   Gestionar la cola de solicitudes de ejecución.
+*   **Tecnología:** AWS SQS (Simple Queue Service).
 
-## Bases de Datos
-La base de datos va a almacenar linformación sobre los usuarios y las ejecuciones de código, permitiendo la consulta de mediciones anteriores. Está diseñada para garantizar eficiencia y escalabilidad, utilizando PostgreSQL (en Azure).
-```sql
-CREATE TABLE users (
-    id SERIAL PRIMARY KEY,
-    username TEXT UNIQUE NOT NULL,
-    email TEXT UNIQUE NOT NULL
-);
+### Base de Datos (PostgreSQL)
 
-CREATE TABLE executions (
-    id SERIAL PRIMARY KEY,
-    user_id INT REFERENCES users(id),
-    language TEXT NOT NULL,
-    code TEXT NOT NULL,
-    execution_time_ms FLOAT NOT NULL,
-    memory_usage_kb FLOAT NOT NULL,
-    complexity_time TEXT,  -- Ej: O(n), O(n log n)
-    complexity_space TEXT, -- Ej: O(1), O(n)
-    created_at TIMESTAMP DEFAULT NOW()
-);
-```
+*   **Responsabilidades:**
+    *   Almacenar el historial de ejecuciones (código, input, lenguaje, resultados, usuario).
+    *   Almacenar la información de los usuarios (username, email, hash de la contraseña).
+    *   (Opcional) Almacenar métricas agregadas para análisis y reportes.
+*   **Tecnología:** PostgreSQL (gestionado por AWS RDS o desplegado en EC2/ECS).
 
-## Casos de Uso
+### API Gateway (AWS API Gateway)
 
-### Ejecución Exitosa de Código
+*   **Responsabilidades:**
+    *   Punto de entrada único para la API.
+    *   Gestión de la autenticación y autorización (JWT). Puede delegar la validación al backend o usar un *authorizer* personalizado.
+    *   *Rate limiting* (complementario al del backend).
+    *   Transformación de solicitudes y respuestas (si es necesario).
+    *   Enrutamiento de solicitudes al backend.
+*   **Tecnología:** AWS API Gateway.
 
-Flujo:
+## 2. Diseño Detallado de los Workers
 
- 1) Usuario ingresa código y presiona "Ejecutar".
-  
- 2) Backend ejecuta el código y mide rendimiento.
-  
- 3)  Se almacena el resultado y se muestra al usuario.
-  
-  Output esperado: ✅ Usuario recibe tiempo de ejecución, uso de memoria y complejidad estimada.
+Este es un aspecto crucial, ya que aquí se ejecuta el código y se mide su rendimiento.
 
-### Código con Error de Sintaxis
+*   **Estructura del Worker (Común a todos los lenguajes):**
 
-Flujo:
+    1.  **Recepción del Mensaje:** El worker escucha la cola SQS y recibe un mensaje con:
+        *   `code`: El código a ejecutar (string).
+        *   `language`: El lenguaje del código ("python", "javascript", etc.).
+        *   `input`: El input para el código (string, number, JSON, etc.).
+        *   `executionId`: Identificador único de la ejecución.
+        *   `userId`: (Opcional) ID del usuario, si el código es de un usuario autenticado.
 
- 1) Usuario ingresa código con errores y lo ejecuta.
-  
- 2) Backend captura el error y lo envía al frontend.
-  
-  Resultado esperado: ❌ Usuario recibe un mensaje con detalles del error.
+    2.  **Preparación del Entorno:**
+        *   Crear un directorio temporal.
+        *   Crear un archivo con el código (`code.py`, `code.js`, etc.).
+        *   Crear un archivo con el input (si es necesario).
 
-### Código con Ejecución Infinita (Timeout)
+    3.  **Ejecución del Código (con Medición):**
+        *   **Tiempo:** APIs de alta resolución:
+            *   JavaScript: `performance.now()`
+            *   Python: `time.perf_counter()` o `time.time()`
+        *   **Memoria:**
+            *   JavaScript: `process.memoryUsage().heapUsed` (heap de V8). Para mayor precisión, un *profiler*.
+            *   Python: `tracemalloc` o `memory_profiler`. También `resource.getrusage(resource.RUSAGE_SELF).ru_maxrss` (Unix-like).
+        *   **Ejecución con `child_process` (Node.js) o `subprocess` (Python):**
+            *   Subproceso para controlar tiempo y recursos.
+            *   Captura de stdout y stderr.
+            *   Timeout para evitar bucles infinitos.
+        *   **Ejemplo (Node.js):**
 
-Flujo:
+            ```javascript
+            const { exec } = require('child_process');
+            const startTime = performance.now();
+            const child = exec('node code.js', { timeout: 5000, maxBuffer: 1024 * 1024 }, (error, stdout, stderr) => {
+                const endTime = performance.now();
+                const executionTime = endTime - startTime;
+                const memoryUsage = process.memoryUsage().heapUsed;
 
- 1) Usuario ingresa código con un bucle infinito.
-  
- 2) Backend detecta que excede el límite de tiempo y cancela la ejecución.
-  
-  Resultado esperado:⌛️ Usuario recibe un mensaje de "Timeout".
+               // ... enviar resultados ...
+            });
 
-### Consulta del Historial de Mediciones
+            if (input) {
+              child.stdin.write(input);
+              child.stdin.end();
+            }
 
-Flujo:
+            ```
 
- 1) Usuario accede a su historial.
-  
- 2) Backend consulta PostgreSQL y devuelve los resultados.
-  
-  Resultado esperado: Usuario ve sus ejecuciones pasadas con detalles de rendimiento.
+        *   **Ejemplo (Python):**
 
-### Lenguaje No Soportado ❌
+            ```python
+            import subprocess
+            import time
+            import tracemalloc
+            import resource
 
-Flujo:
+            start_time = time.perf_counter()
+            tracemalloc.start()
 
-  1) Usuario intenta ejecutar código en un lenguaje no soportado.
-  
-  2) Backend rechaza la solicitud y devuelve un error.
-  
-  Resultado esperado:‼️ Usuario recibe un mensaje indicando que el lenguaje no está disponible. 
+            process = subprocess.Popen(['python', 'code.py'],
+                                      stdin=subprocess.PIPE,
+                                      stdout=subprocess.PIPE,
+                                      stderr=subprocess.PIPE,
+                                      text=True)
+
+            try:
+              stdout, stderr = process.communicate(input=input_data, timeout=5)
+            except subprocess.TimeoutExpired:
+              process.kill()
+              stdout, stderr = process.communicate()
+              stderr += "\nTimeoutExpired: Execution exceeded 5 seconds."
+
+            end_time = time.perf_counter()
+            execution_time = end_time - start_time
+            current, peak = tracemalloc.get_traced_memory()
+            tracemalloc.stop()
+            max_rss = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024  # KB (Unix)
+            # ... enviar resultados ...
+
+            ```
+
+    4.  **Análisis de Complejidad (Aproximación):**
+        *   **Análisis Estático (antes de la ejecución):**
+            *   `esprima` (JavaScript) o `ast` (Python) para parsear el código en un AST.
+            *   Recorrer el AST para identificar:
+                *   Bucles (`for`, `while`).
+                *   Anidamiento de bucles.
+                *   Recursión.
+                *   Llamadas a funciones (si hay información de su complejidad).
+            *   Estimar la complejidad (O(n), O(log n), O(n^2), etc.). Ser conservador.
+        *   **Análisis Dinámico (durante la ejecución):**
+            *   Instrumentar el código (añadir contadores) para contar operaciones clave.  Modificar el AST antes de la ejecución.
+            *   Relacionar las cuentas con el tamaño del input para inferir la complejidad.
+
+    5.  **Envío de Resultados:** Enviar resultados (tiempo, memoria, complejidad, stdout, stderr, executionId, userId) al backend. Opciones:
+        *   **Directamente a la API (menos escalable):** Solicitud HTTP a la API del backend (`POST /api/v1/results`).
+        *   **A través de la cola de mensajes (más escalable):** Mensaje a otra cola SQS (ej. `results-queue`).  *Opción preferida*.
+        *   **A través de la base de datos (no recomendado):** Escribir directamente en la base de datos.  Acopla el worker y puede generar problemas de concurrencia.
+
+    6.  **Manejo de Errores:** Capturar excepciones, registrar errores y timeouts, y enviar un mensaje de error al backend.
+
+*   **Dockerización:**
+    *   `Dockerfile` para cada lenguaje (Node.js, Python, etc.).
+    *   Instalar dependencias.
+    *   Copiar el script del worker.
+    *   Configurar el comando de inicio para escuchar la cola SQS.
+    *   Limitar recursos del contenedor (CPU, memoria) con opciones de Docker.
+
+## 3. Escalabilidad
+
+*   **Horizontal:** Arquitectura con cola de mensajes y workers permite escalar horizontalmente añadiendo más instancias de workers (contenedores). AWS ECS/Fargate lo facilita.
+*   **Vertical:** Aumentar recursos (CPU, memoria) de las instancias EC2/Fargate o de la base de datos (RDS).
+*   **Base de Datos:** PostgreSQL (con RDS) es escalable. Réplicas de lectura para mejorar el rendimiento y sharding/particionamiento para grandes bases de datos.
+*   **API Gateway:** AWS API Gateway escala automáticamente.
+
+## 4. Seguridad
+
+*   **Autenticación y Autorización:** JWT para autenticar usuarios y proteger endpoints.
+*   **Aislamiento:** Docker aísla las ejecuciones de código.
+*   **Limitación de Recursos:** Contenedores con límites de CPU, memoria y tiempo.
+*   **Usuario No Root:** Ejecutar código dentro del contenedor como usuario no root.
+*   **Sin Acceso a Red (o Whitelist):** Deshabilitar acceso a red en contenedores (o usar whitelist).
+*   **Seccomp:** Usar perfil seccomp para restringir llamadas al sistema.
+*   **Escaneo de Vulnerabilidades:** Escanear imágenes Docker.
+*   **HTTPS:** Comunicaciones cifradas (HTTPS).
+*   **Validación de Entrada:** Validar rigurosamente los datos de entrada en el backend.
+*   **Rate Limiting:** En API Gateway y en el backend.
+
+## 5. Despliegue (CI/CD)
+
+*   **Docker Compose:** Para desarrollo local.
+*   **AWS ECS/Fargate:** Para despliegue en producción.
+*   **AWS CodePipeline, CodeBuild, CodeDeploy:** Para CI/CD. Automatizar construcción de imágenes, pruebas y despliegue.
+
+## 6. Monitoreo y Logging
+
+*   **CloudWatch:** Monitorizar rendimiento de la aplicación y contenedores.
+*   **Logs Centralizados:** Usar un sistema centralizado (CloudWatch Logs, ELK stack) para recolectar y analizar logs.
+*   **Alertas:** Configurar alertas en CloudWatch para problemas (errores, alto uso de CPU).
+
+Este documento proporciona una descripción detallada del diseño del sistema de Argus.  Es importante iterar sobre este diseño durante el desarrollo.
