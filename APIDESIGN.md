@@ -1,4 +1,4 @@
-# Diseño de la API REST para Argus (MVP Monolítico)
+# Diseño de la API REST
 
 Este documento describe el diseño de la API REST para la versión MVP (Minimum Viable Product) de Argus. La API permite a los usuarios ejecutar código en varios lenguajes, obtener métricas de rendimiento y acceder a su historial de ejecuciones.  Se sigue un enfoque RESTful, con una arquitectura inicialmente monolítica (backend en Node.js/Express.js) pero preparada para una futura migración a microservicios.
 
